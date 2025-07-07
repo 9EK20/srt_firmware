@@ -58,31 +58,33 @@
   }
 
   connectBtn.onclick = async () => {
-    try {
-      log('Requesting BLE device...');
-      device = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [OTA_SERVICE_UUID] }]
-      });
+  try {
+    log('Requesting any BLE device...');
+    device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [OTA_SERVICE_UUID]
+    });
 
-      log('Connecting to GATT server...');
-      server = await device.gatt.connect();
+    log('Connecting to GATT server...');
+    server = await device.gatt.connect();
 
-      log('Getting OTA service...');
-      otaService = await server.getPrimaryService(OTA_SERVICE_UUID);
+    log('Getting OTA service...');
+    otaService = await server.getPrimaryService(OTA_SERVICE_UUID);
 
-      log('Getting characteristics...');
-      controlChar = await otaService.getCharacteristic(OTA_CONTROL_CHAR_UUID);
-      dataChar = await otaService.getCharacteristic(OTA_DATA_CHAR_UUID);
+    log('Getting characteristics...');
+    controlChar = await otaService.getCharacteristic(OTA_CONTROL_CHAR_UUID);
+    dataChar = await otaService.getCharacteristic(OTA_DATA_CHAR_UUID);
 
-      log('Connected to ESP32 BLE OTA server!');
-      startOtaBtn.disabled = false;
-      sendDataBtn.disabled = true;
-      endOtaBtn.disabled = true;
+    log('Connected to BLE OTA server!');
+    startOtaBtn.disabled = false;
+    sendDataBtn.disabled = true;
+    endOtaBtn.disabled = true;
 
-    } catch (error) {
-      log('Error: ' + error);
-    }
-  };
+  } catch (error) {
+    log('Error: ' + error);
+  }
+};
+
 
   startOtaBtn.onclick = async () => {
     if (!controlChar) {

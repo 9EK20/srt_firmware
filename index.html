@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ESP32 BLE OTA Web Client</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 20px; }
+  button { padding: 10px 20px; margin: 5px; }
+  select { padding: 5px; }
+  #log { margin-top: 20px; white-space: pre-wrap; border: 1px solid #ccc; padding: 10px; height: 200px; overflow-y: scroll;}
+</style>
+</head>
+<body>
+
+<h2>ESP32 BLE OTA via Web Bluetooth</h2>
+
+<label for="firmwareSelect">เลือก Firmware จาก GitHub:</label>
+<select id="firmwareSelect">
+  <option value="">-- เลือกไฟล์ Firmware --</option>
+  <option value="https://raw.githubusercontent.com/yourusername/yourrepo/main/firmware/v1.0.bin">v1.0.bin</option>
+  <option value="https://raw.githubusercontent.com/yourusername/yourrepo/main/firmware/v1.1.bin">v1.1.bin</option>
+</select>
+<br />
+
+<button id="connectBtn">เชื่อมต่อ BLE ESP32</button>
+<button id="startOtaBtn" disabled>เริ่ม OTA</button>
+<button id="sendDataBtn" disabled>ส่ง Firmware</button>
+<button id="endOtaBtn" disabled>จบ OTA</button>
+
+<div id="log"></div>
+
+<script>
+  const OTA_SERVICE_UUID       = 0xFFF0;
+  const OTA_CONTROL_CHAR_UUID  = 0xFFF1;
+  const OTA_DATA_CHAR_UUID     = 0xFFF2;
+
+  let device;
+  let server;
+  let otaService;
+  let controlChar;
+  let dataChar;
+
+  let firmwareBuffer;
+  let chunkSize = 512; // BLE MTU เล็กสุดจริงๆ 20, แต่ NimBLE support ใหญ่กว่า เลือก 512 ก็ได้ (ถ้า connection MTU รองรับ)
+  let offset = 0;
+
+  const logEl = document.getElementById('log');
+  const firmwareSelect = document.getElementById('firmwareSelect');
+  const connectBtn = document.getElementById('connectBtn');
+  const startOtaBtn = document.getElementById('startOtaBtn');
+  const sendDataBtn = document.getElementById('sendDataBtn');
+  const endOtaBtn = document.getElementById('endOtaBtn');
+
+  function log(msg) {
+    logEl.textContent += msg + "\n";
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  connectBtn.onclick = async () => {
+    try {
+      log('Requesting BLE device...');
+      device = await navigator.bluetooth.requestDevice({
+        filters: [{ services: [OTA_SERVICE_UUID] }]
+      });
+
+      log('Connecting to GATT server...');
+      server = await device.gatt.connect();
+
+      log('Getting OTA service...');
+      otaService = await server.getPrimaryService(OTA_SERVICE_UUID);
+
+      log('Getting characteristics...');
+      controlChar = await otaService.getCharacteristic(OTA_CONTROL_CHAR_UUID);
+      dataChar = await otaService.getCharacteristic(OTA_DATA_CHAR_UUID);
+
+      log('Connected to ESP32 BLE OTA server!');
+      startOtaBtn.disabled = false;
+      sendDataBtn.disabled = true;
+      endOtaBtn.disabled = true;
+
+    } catch (error) {
+      log('Error: ' + error);
+    }
+  };
+
+  startOtaBtn.onclick = async () => {
+    if (!controlChar) {
+      log('Not connected to OTA control characteristic.');
+      return;
+    }
+    log('Sending OTA start command...');
+    const startCmd = new Uint8Array([0x01]);
+    await controlChar.writeValue(startCmd);
+    offset = 0;
+
+    // โหลด firmware จาก GitHub
+    const url = firmwareSelect.value;
+    if (!url) {
+      log('กรุณาเลือกไฟล์ firmware จาก GitHub');
+      return;
+    }
+
+    log('Downloading firmware from GitHub...');
+    const response = await fetch(url);
+    firmwareBuffer = await response.arrayBuffer();
+    log(`Firmware loaded: ${firmwareBuffer.byteLength} bytes`);
+
+    sendDataBtn.disabled = false;
+    endOtaBtn.disabled = true;
+  };
+
+  sendDataBtn.onclick = async () => {
+    if (!dataChar || !firmwareBuffer) {
+      log('ไม่มีข้อมูล firmware หรือไม่ได้เชื่อมต่อ');
+      return;
+    }
+
+    const totalSize = firmwareBuffer.byteLength;
+    const dataView = new Uint8Array(firmwareBuffer);
+
+    log('Sending firmware data in chunks...');
+
+    while (offset < totalSize) {
+      const end = Math.min(offset + chunkSize, totalSize);
+      const chunk = dataView.slice(offset, end);
+      await dataChar.writeValue(chunk);
+      offset = end;
+      log(`Sent ${offset} / ${totalSize} bytes`);
+      // ใส่ delay เล็กน้อยถ้าจำเป็น
+      await new Promise(r => setTimeout(r, 50));
+    }
+
+    log('Finished sending firmware data.');
+    sendDataBtn.disabled = true;
+    endOtaBtn.disabled = false;
+  };
+
+  endOtaBtn.onclick = async () => {
+    if (!controlChar) {
+      log('Not connected to OTA control characteristic.');
+      return;
+    }
+    log('Sending OTA end command...');
+    const endCmd = new Uint8Array([0xFF]);
+    await controlChar.writeValue(endCmd);
+
+    log('OTA end command sent. Device should reboot with new firmware.');
+    endOtaBtn.disabled = true;
+  };
+
+</script>
+
+</body>
+</html>

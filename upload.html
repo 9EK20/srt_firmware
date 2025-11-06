@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ESP32 BLE OTA Uploader</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #111;
+    color: #eee;
+    text-align: center;
+    margin: 0;
+    padding: 2rem;
+  }
+  h1 {
+    color: #00c8ff;
+  }
+  .card {
+    background: #222;
+    border-radius: 1rem;
+    padding: 2rem;
+    max-width: 500px;
+    margin: auto;
+    box-shadow: 0 0 10px rgba(0,255,255,0.2);
+  }
+  input, button {
+    margin: 0.5rem;
+    padding: 0.8rem;
+    font-size: 1rem;
+  }
+  button {
+    background-color: #00c8ff;
+    border: none;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    color: #000;
+  }
+  button:disabled {
+    background-color: #666;
+    cursor: not-allowed;
+  }
+  #log {
+    text-align: left;
+    background: #000;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    height: 200px;
+    overflow-y: auto;
+    font-family: monospace;
+  }
+</style>
+</head>
+<body>
+  <h1>ESP32 BLE OTA Uploader</h1>
+  <div class="card">
+    <button id="connectButton">🔗 Connect Device</button><br>
+    <input type="file" id="firmwareFile" accept=".bin"><br>
+    <button id="uploadButton" disabled>🚀 Upload Firmware</button>
+    <p id="status"></p>
+    <div id="log"></div>
+  </div>
+
+<script>
+const OTA_SERVICE_UUID = 0xABF0;
+const CONTROL_CHAR_UUID = 0xABF1;
+const DATA_CHAR_UUID = 0xABF2;
+
+let device, server, service;
+let controlChar, dataChar;
+
+function log(text) {
+  const logBox = document.getElementById('log');
+  logBox.innerHTML += text + "<br>";
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+document.getElementById('connectButton').addEventListener('click', async () => {
+  try {
+    log("Requesting BLE device...");
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'BLE_OTA' }],
+      optionalServices: [OTA_SERVICE_UUID]
+    });
+
+    log("Connecting to GATT server...");
+    server = await device.gatt.connect();
+
+    log("Getting OTA service...");
+    service = await server.getPrimaryService(OTA_SERVICE_UUID);
+
+    log("Getting characteristics...");
+    controlChar = await service.getCharacteristic(CONTROL_CHAR_UUID);
+    dataChar = await service.getCharacteristic(DATA_CHAR_UUID);
+
+    document.getElementById('uploadButton').disabled = false;
+    log("✅ Device connected and ready for OTA");
+  } catch (error) {
+    log("❌ Error: " + error);
+  }
+});
+
+document.getElementById('uploadButton').addEventListener('click', async () => {
+  const fileInput = document.getElementById('firmwareFile');
+  if (!fileInput.files.length) {
+    alert("Please select a .bin file first!");
+    return;
+  }
+
+  const file = fileInput.files[0];
+  const arrayBuffer = await file.arrayBuffer();
+  const chunkSize = 512;
+  const totalChunks = Math.ceil(arrayBuffer.byteLength / chunkSize);
+
+  try {
+    log("🚀 Starting OTA...");
+    await controlChar.writeValue(Uint8Array.of(0x01)); // Start OTA
+
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * chunkSize;
+      const end = Math.min(start + chunkSize, arrayBuffer.byteLength);
+      const chunk = arrayBuffer.slice(start, end);
+      await dataChar.writeValue(chunk);
+
+      if (i % 10 === 0 || i === totalChunks - 1) {
+        log(`Chunk ${i + 1}/${totalChunks}`);
+      }
+    }
+
+    log("✅ OTA Data sent, finishing...");
+    await controlChar.writeValue(Uint8Array.of(0x02)); // Finish OTA
+    log("🎉 OTA complete! ESP32 should restart now.");
+  } catch (error) {
+    log("❌ Upload failed: " + error);
+  }
+});
+</script>
+</body>
+</html>
